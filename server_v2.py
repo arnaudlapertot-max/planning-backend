@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Query
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import openpyxl
 import pandas as pd
 from io import BytesIO
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager  # Ajouté
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -43,23 +43,6 @@ async def lifespan(app: FastAPI):
 
 # Créer l'application avec le lifespan handler
 app = FastAPI(lifespan=lifespan)
-
-# CORS MIDDLEWARE - UN SEUL FOIS ICI
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://planning-cours-leeb.vercel.app",
-        "https://planning-cours-leeb-42qu09vff-arnauds-projects-0c50c94d.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:8080", 
-        "http://localhost:8000"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -373,6 +356,50 @@ async def get_matieres():
     matieres = await app.state.db.courses.distinct('matiere')
     return sorted(matieres)
 
+import requests  # Ajoute cet import en haut
+
+@api_router.post("/render/resume")
+async def resume_render_service():
+    """
+    Réactive le service Render s'il est suspendu.
+    """
+    api_key = os.environ.get("RENDER_API_KEY")
+    service_id = os.environ.get("RENDER_SERVICE_ID")
+    
+    if not api_key or not service_id:
+        raise HTTPException(
+            status_code=500,
+            detail="RENDER_API_KEY ou RENDER_SERVICE_ID non configuré"
+        )
+    
+    try:
+        response = requests.post(
+            f"https://api.render.com/v1/services/{service_id}/resume",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json"
+            },
+            timeout=15
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Erreur réseau: {str(e)}")
+    
+    if response.status_code == 202:
+        return {
+            "success": True,
+            "message": "Service Render en cours de réactivation (environ 1 minute)"
+        }
+    elif response.status_code == 200:
+        return {
+            "success": True,
+            "message": "Service déjà actif"
+        }
+    else:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Erreur Render: {response.text}"
+        )
+		
 @api_router.get("/synthesis")
 async def get_synthesis(
     classe: Optional[str] = Query(None),
@@ -432,12 +459,22 @@ async def get_synthesis(
 # Include the router in the main app
 app.include_router(api_router)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# REMOVED: @app.on_event("shutdown") - Maintenant géré dans le lifespan handler
 
 if __name__ == "__main__":
     import uvicorn
