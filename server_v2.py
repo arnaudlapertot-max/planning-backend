@@ -97,6 +97,11 @@ class SynthesisData(BaseModel):
 async def root():
     return {"message": "API Planning des Cours"}
 
+@app.get("/health")
+async def health_check():
+    """Endpoint léger pour réveiller le service et vérifier qu'il répond."""
+    return {"status": "ok"}
+	
 @api_router.post("/import-excel")
 async def import_excel(file: UploadFile = File(...)):
     """
